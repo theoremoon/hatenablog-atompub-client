@@ -55,7 +55,7 @@ uuid: "550e8400-e29b-41d4-a716-446655440000"
 
 1. プロジェクトをビルド：
    ```bash
-   go build -o hatenablog-sync ./cmd
+   go build -o hatenablog-atompub-client ./cmd
    ```
 
 2. 環境変数を設定：
@@ -73,14 +73,14 @@ uuid: "550e8400-e29b-41d4-a716-446655440000"
 3. 記事を同期：
    ```bash
    # Dry run（変更内容の確認のみ）
-   ./hatenablog-sync -dir /path/to/articles -dry-run
+   ./hatenablog-atompub-client -dir /path/to/articles -dry-run
    
    # 実際に同期を実行
-   ./hatenablog-sync -dir /path/to/articles
+   ./hatenablog-atompub-client -dir /path/to/articles
    
    # 削除も含めた完全同期（DANGEROUS）
-   ./hatenablog-sync -dir /path/to/articles -delete-orphan -dry-run  # 最初は必ずdry-runで確認
-   ./hatenablog-sync -dir /path/to/articles -delete-orphan
+   ./hatenablog-atompub-client -dir /path/to/articles -delete-orphan -dry-run  # 最初は必ずdry-runで確認
+   ./hatenablog-atompub-client -dir /path/to/articles -delete-orphan
    ```
 
 ## オプション

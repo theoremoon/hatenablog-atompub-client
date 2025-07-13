@@ -76,7 +76,7 @@ Article content here...
 ## Build & Usage
 ```bash
 # Build
-go build -o hatenablog-sync ./cmd
+go build -o hatenablog-atompub-client ./cmd
 
 # Set environment variables
 export HATENA_ID="your-hatena-id"
@@ -84,8 +84,8 @@ export BLOG_ID="your-blog.hatenablog.com"
 export API_KEY="your-api-key"
 
 # Sync articles
-./hatenablog-sync -dir /path/to/articles -dry-run
-./hatenablog-sync -dir /path/to/articles
+./hatenablog-atompub-client -dir /path/to/articles -dry-run
+./hatenablog-atompub-client -dir /path/to/articles
 ```
 
 ## Development Status
