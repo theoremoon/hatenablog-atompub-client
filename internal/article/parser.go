@@ -4,13 +4,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 )
-
-var frontmatterRegex = regexp.MustCompile(`(?s)^---\s*\n(.*?)\n---\s*\n(.*)$`)
 
 func ParseFile(filePath string) (*Article, error) {
 	content, err := os.ReadFile(filePath)
@@ -22,13 +19,37 @@ func ParseFile(filePath string) (*Article, error) {
 }
 
 func ParseContent(content, filePath string) (*Article, error) {
-	matches := frontmatterRegex.FindStringSubmatch(strings.TrimSpace(content))
-	if len(matches) != 3 {
-		return nil, fmt.Errorf("invalid frontmatter format in %s", filePath)
+	lines := strings.Split(content, "\n")
+	
+	// Check if first line is opening frontmatter delimiter
+	if len(lines) == 0 || lines[0] != "---" {
+		return nil, fmt.Errorf("invalid frontmatter format in %s: missing opening ---", filePath)
 	}
-
-	frontmatter := matches[1]
-	body := strings.TrimSpace(matches[2])
+	
+	// Find the second occurrence of "---" at the beginning of a line
+	var frontmatterLines []string
+	var bodyStartIndex int
+	found := false
+	
+	for i := 1; i < len(lines); i++ {
+		if lines[i] == "---" {
+			bodyStartIndex = i + 1
+			found = true
+			break
+		}
+		frontmatterLines = append(frontmatterLines, lines[i])
+	}
+	
+	if !found {
+		return nil, fmt.Errorf("invalid frontmatter format in %s: missing closing ---", filePath)
+	}
+	
+	frontmatter := strings.Join(frontmatterLines, "\n")
+	var body string
+	if bodyStartIndex < len(lines) {
+		body = strings.Join(lines[bodyStartIndex:], "\n")
+	}
+	body = strings.TrimSpace(body)
 
 	var article Article
 	if err := yaml.Unmarshal([]byte(frontmatter), &article); err != nil {
@@ -81,14 +102,36 @@ func UpdateArticleUUID(article *Article, uuid string) error {
 		return fmt.Errorf("failed to read file %s: %w", article.FilePath, err)
 	}
 
-	contentStr := string(content)
-	matches := frontmatterRegex.FindStringSubmatch(strings.TrimSpace(contentStr))
-	if len(matches) != 3 {
+	lines := strings.Split(string(content), "\n")
+	
+	// Check if first line is opening frontmatter delimiter
+	if len(lines) == 0 || lines[0] != "---" {
 		return fmt.Errorf("invalid frontmatter format in %s", article.FilePath)
 	}
-
-	frontmatter := matches[1]
-	body := matches[2]
+	
+	// Find the second occurrence of "---" at the beginning of a line
+	var frontmatterLines []string
+	var bodyStartIndex int
+	found := false
+	
+	for i := 1; i < len(lines); i++ {
+		if lines[i] == "---" {
+			bodyStartIndex = i + 1
+			found = true
+			break
+		}
+		frontmatterLines = append(frontmatterLines, lines[i])
+	}
+	
+	if !found {
+		return fmt.Errorf("invalid frontmatter format in %s", article.FilePath)
+	}
+	
+	frontmatter := strings.Join(frontmatterLines, "\n")
+	var body string
+	if bodyStartIndex < len(lines) {
+		body = strings.Join(lines[bodyStartIndex:], "\n")
+	}
 
 	var frontMatterMap map[string]interface{}
 	if err := yaml.Unmarshal([]byte(frontmatter), &frontMatterMap); err != nil {
