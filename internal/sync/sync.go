@@ -64,6 +64,30 @@ func (s *Syncer) SyncArticles(localArticles []*article.Article) (*SyncResult, er
 		}
 	}
 
+	// Delete orphaned articles first
+	if s.deleteOrphan {
+		for uuid, remoteEntry := range remoteUUIDMap {
+			if _, exists := localUUIDMap[uuid]; !exists {
+				entryID := hatena.ExtractEntryIDFromEditURL(remoteEntry.EditURL)
+				if entryID == "" {
+					err := fmt.Errorf("failed to extract entry ID from edit URL: %s", remoteEntry.EditURL)
+					result.Errors = append(result.Errors, err)
+					continue
+				}
+
+				err := s.client.DeleteEntry(entryID)
+				if err != nil {
+					err = fmt.Errorf("failed to delete article %s: %w", remoteEntry.Title, err)
+					result.Errors = append(result.Errors, err)
+					continue
+				}
+				log.Printf("- %s", remoteEntry.URL)
+				result.Deleted++
+			}
+		}
+	}
+
+	// Then create/update local articles
 	for _, localArticle := range localArticles {
 		if localArticle.UUID == "" {
 			createdEntry, err := s.client.CreateEntry(localArticle)
@@ -125,28 +149,6 @@ func (s *Syncer) SyncArticles(localArticles []*article.Article) (*SyncResult, er
 		}
 	}
 
-	if s.deleteOrphan {
-		for uuid, remoteEntry := range remoteUUIDMap {
-			if _, exists := localUUIDMap[uuid]; !exists {
-				entryID := hatena.ExtractEntryIDFromEditURL(remoteEntry.EditURL)
-				if entryID == "" {
-					err := fmt.Errorf("failed to extract entry ID from edit URL: %s", remoteEntry.EditURL)
-					result.Errors = append(result.Errors, err)
-					continue
-				}
-
-				err := s.client.DeleteEntry(entryID)
-				if err != nil {
-					err = fmt.Errorf("failed to delete article %s: %w", remoteEntry.Title, err)
-					result.Errors = append(result.Errors, err)
-					continue
-				}
-				log.Printf("- %s", remoteEntry.URL)
-				result.Deleted++
-			}
-		}
-	}
-
 	return result, nil
 }
 
@@ -174,6 +176,21 @@ func (s *Syncer) DryRunSyncArticles(localArticles []*article.Article) (*SyncResu
 		}
 	}
 
+	// Check for orphaned articles first
+	if s.deleteOrphan {
+		for uuid, remoteEntry := range remoteUUIDMap {
+			if _, exists := localUUIDMap[uuid]; !exists {
+				actions = append(actions, DryRunAction{
+					Type:        "delete",
+					RemoteEntry: remoteEntry,
+					Reason:      "Article no longer exists locally",
+				})
+				result.Deleted++
+			}
+		}
+	}
+
+	// Then check local articles for create/update
 	for _, localArticle := range localArticles {
 		if localArticle.UUID == "" {
 			actions = append(actions, DryRunAction{
@@ -217,19 +234,6 @@ func (s *Syncer) DryRunSyncArticles(localArticles []*article.Article) (*SyncResu
 				Reason:  "New article (UUID not found in remote)",
 			})
 			result.Created++
-		}
-	}
-
-	if s.deleteOrphan {
-		for uuid, remoteEntry := range remoteUUIDMap {
-			if _, exists := localUUIDMap[uuid]; !exists {
-				actions = append(actions, DryRunAction{
-					Type:        "delete",
-					RemoteEntry: remoteEntry,
-					Reason:      "Article no longer exists locally",
-				})
-				result.Deleted++
-			}
 		}
 	}
 
