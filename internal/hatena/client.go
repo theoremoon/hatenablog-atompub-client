@@ -52,6 +52,7 @@ type AtomFeed struct {
 	XMLName xml.Name    `xml:"feed"`
 	Xmlns   string      `xml:"xmlns,attr"`
 	Entry   []AtomEntry `xml:"entry"`
+	Link    []Link      `xml:"link"`
 }
 
 func NewClient(cfg *config.Config) *Client {
@@ -84,49 +85,83 @@ func (c *Client) createRequest(method, url string, body io.Reader) (*http.Reques
 }
 
 func (c *Client) GetEntries() ([]*article.HatenaEntry, error) {
-	req, err := c.createRequest("GET", c.getCollectionURL(), nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
+	var allEntries []*article.HatenaEntry
+	currentURL := c.getCollectionURL()
+	pageNum := 1
 
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to execute request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var feed AtomFeed
-	if err := xml.NewDecoder(resp.Body).Decode(&feed); err != nil {
-		return nil, fmt.Errorf("failed to decode XML: %w", err)
-	}
-
-	var entries []*article.HatenaEntry
-	for _, atomEntry := range feed.Entry {
-		entry := &article.HatenaEntry{
-			ID:      atomEntry.ID,
-			Title:   atomEntry.Title,
-			Content: atomEntry.Content.Text,
-			Updated: atomEntry.Updated,
-			IsDraft: atomEntry.Control != nil && atomEntry.Control.Draft == "yes",
+	for {
+		req, err := c.createRequest("GET", currentURL, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request for page %d: %w", pageNum, err)
 		}
 
-		for _, link := range atomEntry.Link {
-			if link.Rel == "alternate" {
-				entry.URL = link.Href
-			} else if link.Rel == "edit" {
-				entry.EditURL = link.Href
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("failed to execute request for page %d: %w", pageNum, err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			return nil, fmt.Errorf("API request failed with status %d for page %d: %s", resp.StatusCode, pageNum, string(body))
+		}
+
+		var feed AtomFeed
+		if err := xml.NewDecoder(resp.Body).Decode(&feed); err != nil {
+			return nil, fmt.Errorf("failed to decode XML for page %d: %w", pageNum, err)
+		}
+
+		// If no entries in this page, we've reached the end
+		if len(feed.Entry) == 0 {
+			break
+		}
+
+		var entries []*article.HatenaEntry
+		for _, atomEntry := range feed.Entry {
+			entry := &article.HatenaEntry{
+				ID:      atomEntry.ID,
+				Title:   atomEntry.Title,
+				Content: atomEntry.Content.Text,
+				Updated: atomEntry.Updated,
+				IsDraft: atomEntry.Control != nil && atomEntry.Control.Draft == "yes",
+			}
+
+			for _, link := range atomEntry.Link {
+				if link.Rel == "alternate" {
+					entry.URL = link.Href
+				} else if link.Rel == "edit" {
+					entry.EditURL = link.Href
+				}
+			}
+
+			entries = append(entries, entry)
+		}
+
+		allEntries = append(allEntries, entries...)
+		fmt.Printf("Fetched page %d: %d entries (total: %d)\n", pageNum, len(entries), len(allEntries))
+
+		// Look for rel="next" link to get next page URL
+		var nextURL string
+		for _, link := range feed.Link {
+			if link.Rel == "next" {
+				nextURL = link.Href
+				break
 			}
 		}
 
-		entries = append(entries, entry)
+		// If no "next" link found, we've reached the last page
+		if nextURL == "" {
+			break
+		}
+
+		currentURL = nextURL
+		pageNum++
+		
+		// Add a small delay to be respectful to the API
+		time.Sleep(100 * time.Millisecond)
 	}
 
-	return entries, nil
+	return allEntries, nil
 }
 
 func (c *Client) CreateEntry(art *article.Article) (*article.HatenaEntry, error) {

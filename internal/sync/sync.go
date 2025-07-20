@@ -29,6 +29,11 @@ type DryRunAction struct {
 	Reason      string
 }
 
+type DuplicateEntry struct {
+	Title   string
+	Entries []*article.HatenaEntry
+}
+
 func NewSyncer(client *hatena.Client) *Syncer {
 	return &Syncer{client: client, deleteOrphan: false}
 }
@@ -45,6 +50,10 @@ func (s *Syncer) SyncArticles(localArticles []*article.Article) (*SyncResult, er
 		return nil, fmt.Errorf("failed to get remote entries: %w", err)
 	}
 
+	// Check for duplicate entries first
+	duplicates := s.FindDuplicateEntries(remoteEntries)
+	s.ReportDuplicateEntries(duplicates)
+
 	remoteUUIDMap := make(map[string]*article.HatenaEntry)
 	for _, entry := range remoteEntries {
 		uuid := hatena.ExtractUUIDFromEntryID(entry.ID)
@@ -54,13 +63,9 @@ func (s *Syncer) SyncArticles(localArticles []*article.Article) (*SyncResult, er
 	}
 
 	localUUIDMap := make(map[string]*article.Article)
-	var articlesWithoutUUID []*article.Article
-
 	for _, art := range localArticles {
 		if art.UUID != "" {
 			localUUIDMap[art.UUID] = art
-		} else {
-			articlesWithoutUUID = append(articlesWithoutUUID, art)
 		}
 	}
 
@@ -134,18 +139,10 @@ func (s *Syncer) SyncArticles(localArticles []*article.Article) (*SyncResult, er
 				result.Skipped++
 			}
 		} else {
-			_, err := s.client.CreateEntry(localArticle)
-			if err != nil {
-				if isDailyLimitExceeded(err) {
-					log.Printf("はてなブログの1日の投稿制限に達しました。処理を停止します。")
-					return result, fmt.Errorf("daily posting limit exceeded: %w", err)
-				}
-				err = fmt.Errorf("failed to create article %s: %w", localArticle.Title, err)
-				result.Errors = append(result.Errors, err)
-				continue
-			}
-			log.Printf("+ %s", localArticle.FilePath)
-			result.Created++
+			// UUID exists but not found in remote - should not happen in normal flow
+			// This case should be handled by the UUID-less creation logic above
+			log.Printf("Warning: Article %s has UUID but not found in remote", localArticle.FilePath)
+			result.Skipped++
 		}
 	}
 
@@ -160,6 +157,10 @@ func (s *Syncer) DryRunSyncArticles(localArticles []*article.Article) (*SyncResu
 	if err != nil {
 		return nil, fmt.Errorf("failed to get remote entries: %w", err)
 	}
+
+	// Check for duplicate entries first
+	duplicates := s.FindDuplicateEntries(remoteEntries)
+	s.ReportDuplicateEntries(duplicates)
 
 	remoteUUIDMap := make(map[string]*article.HatenaEntry)
 	for _, entry := range remoteEntries {
@@ -277,4 +278,50 @@ func isDailyLimitExceeded(err error) bool {
 
 	errStr := err.Error()
 	return strings.Contains(errStr, "Entry limit was exceeded")
+}
+
+func (s *Syncer) FindDuplicateEntries(remoteEntries []*article.HatenaEntry) []DuplicateEntry {
+	titleMap := make(map[string][]*article.HatenaEntry)
+	
+	// Group entries by title
+	for _, entry := range remoteEntries {
+		titleMap[entry.Title] = append(titleMap[entry.Title], entry)
+	}
+	
+	// Find duplicates
+	var duplicates []DuplicateEntry
+	for title, entries := range titleMap {
+		if len(entries) > 1 {
+			duplicates = append(duplicates, DuplicateEntry{
+				Title:   title,
+				Entries: entries,
+			})
+		}
+	}
+	
+	return duplicates
+}
+
+func (s *Syncer) ReportDuplicateEntries(duplicates []DuplicateEntry) {
+	if len(duplicates) == 0 {
+		fmt.Println("No duplicate entries found.")
+		return
+	}
+	
+	fmt.Printf("\n=== DUPLICATE ENTRIES DETECTED ===\n")
+	fmt.Printf("Found %d titles with multiple entries:\n\n", len(duplicates))
+	
+	for i, dup := range duplicates {
+		fmt.Printf("%d. Title: \"%s\" (%d entries)\n", i+1, dup.Title, len(dup.Entries))
+		for j, entry := range dup.Entries {
+			uuid := hatena.ExtractUUIDFromEntryID(entry.ID)
+			fmt.Printf("   Entry %d: UUID=%s, Updated=%s\n", j+1, uuid, entry.Updated)
+			if entry.URL != "" {
+				fmt.Printf("             URL=%s\n", entry.URL)
+			}
+		}
+		fmt.Println()
+	}
+	
+	fmt.Println("=== END DUPLICATE REPORT ===\n")
 }
